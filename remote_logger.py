@@ -60,11 +60,9 @@ if __name__ == '__main__':
 
 
 
-
-    json_to_pg = JSONSchemaToPostgres("localhost", schema, "root_table")
-    print(json_to_pg.flatten_dict({
-  "studentId": "S12345",
-  "name": "Alice",
+    con = 1
+    json_to_pg = JSONSchemaToPostgres("localhost", schema, "root_table", "http")
+    print(json_to_pg.insert_to_db({"interval": 1, "body": {
   "courses": [
     {
       "courseId": "C001",
@@ -95,5 +93,5 @@ if __name__ == '__main__':
       ]
     }
   ]
-}))
+  }}, con))
     # {'loginfo': {'functionName': 'string', 'checkpointName': 'string', 'logLevel': 'string'}, 'Position': {'x': 'number', 'y': 'number', 'raw': 'number'}}

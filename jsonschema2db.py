@@ -1,9 +1,8 @@
-from sqlalchemy import Column, Float, Integer, String, Boolean, Enum, DateTime, ForeignKey
-from sqlalchemy.orm import declarative_base, composite
+from sqlalchemy import Column, Float, Integer, String, Boolean, Enum, ForeignKey
+from sqlalchemy.orm import declarative_base
 from jsonschema import Draft7Validator
 from collections import deque
 from jsonschema.exceptions import SchemaError
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 import enum
 
 
@@ -11,16 +10,17 @@ Base = declarative_base()
 
 
 class JSONSchemaToPostgres():
-    def __init__(self, hostname, schema, root_table_name=None):
+    def __init__(self, hostname, schema, root_table_name=None, api_type=None):
         self.hostname = hostname
         self.schema = schema
         if root_table_name is None:
             self.root_table_name = hostname
         else:
             self.root_table_name = root_table_name
+        self.api_type = api_type
         self.validate_schema()
         self.orms = self.generate_basic_orm()
-
+        
     def validate_schema(self):
         try:
             # 验证 schema 是否符合标准
@@ -110,7 +110,9 @@ class JSONSchemaToPostgres():
             index = 0
             for item in items_schema:
                 if "enum" in item:
-                    column_type = self.handle_enum(f"{table_name}_item_{index}", item)
+                    column_type = self.handle_enum(
+                        f"{table_name}_item_{index}", item
+                    )
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(item.get("type"))
@@ -138,10 +140,14 @@ class JSONSchemaToPostgres():
             self, columns, sub_nodes, table_name,
             parent_table, orm_classes, node_queue
     ):
+        columns["id"] = Column("id", Integer, primary_key=True)
+        if table_name == self.root_table_name:
+            if self.api_type == "http":
+                columns["interval"] = Column("interval", Integer)
+                columns["timeout"] = Column("timeout", Integer)
+                columns["status_code"] = Column("status_code", Integer)
         """生成 ORM 类并将子节点加入队列"""
         if columns:
-            columns["id"] = Column("id", Integer, primary_key=True)
-
             # 如果有父表，添加外键
             if parent_table:
                 columns[f"{parent_table}_id"] = ForeignKey(
@@ -167,9 +173,7 @@ class JSONSchemaToPostgres():
                 )
 
         else:
-            if table_name == self.root_table_name:
-                columns["id"] = Column("id", Integer, primary_key=True)
-                orm_classes[table_name] = self.create_orm_class(
+            orm_classes[table_name] = self.create_orm_class(
                     table_name,
                     columns
                 )
@@ -196,18 +200,25 @@ class JSONSchemaToPostgres():
         Handles enum types.
         """
         enum_values = value.get("enum", [])
-        enum_type = value.get("type", "string")  # Default to string type for enum
+        enum_type = value.get("type", "string")  
+        # Default to string type for enum
 
         if enum_type == "string":
-            EnumType = enum.Enum(f"{key.capitalize()}_Enum", enum_values, type=str)
+            EnumType = enum.Enum(
+                f"{key.capitalize()}_Enum", enum_values, type=str
+            )
         elif enum_type == "integer":
             # If enum is of integer type
             enum_values = [int(v) for v in enum_values]
-            EnumType = enum.Enum(f"{key.capitalize()}_Enum", enum_values, type=int)
+            EnumType = enum.Enum(
+                f"{key.capitalize()}_Enum", enum_values, type=int
+            )
         elif enum_type == "number":
             # If enum is of number type
             enum_values = [float(v) for v in enum_values]
-            EnumType = enum.Enum(f"{key.capitalize()}_Enum", enum_values, type=float)
+            EnumType = enum.Enum(
+                f"{key.capitalize()}_Enum", enum_values, type=float
+            )
 
         # Return SQLAlchemy Enum type
         return Enum(EnumType)
@@ -227,24 +238,21 @@ class JSONSchemaToPostgres():
     def flatten_dict(self, data):
         result = []
         stack = [(data, self.root_table_name, None)]
-        index = 0
+        index = -1
         while stack:
             current, table_name, parent_index = stack.pop()
             if isinstance(current, dict):
                 flattened = {table_name: {}}
                 for key, value in current.items():
-                    if isinstance(value, dict):
+                    if isinstance(value, dict) or isinstance(value, list):
                         # 如果值是字典，则将该字典继续添加到队列中
-                        stack.append((value, table_name + '_' + key, index))
-                    elif isinstance(value, list):
-                        # 如果值是列表，则将每个元素（可能是字典或其他）继续添加到队列中
                         stack.append((value, table_name + '_' + key, index))
                     else:
                         # 如果值是基本类型，直接添加到当前扁平化字典
                         flattened[table_name][key] = value
-                if flattened != {}:
+                if flattened[table_name] != {} or table_name == self.root_table_name:
                     # 将当前层的扁平字典添加到结果中
-                    if parent_index:
+                    if parent_index is not None:
                         flattened[table_name]["parent_index"] = parent_index
                     result.append(flattened)
                     index += 1
@@ -261,8 +269,30 @@ class JSONSchemaToPostgres():
                     flattened[table_name] = temp
                 if flattened != {}:
                     # 将当前层的扁平字典添加到结果中
-                    if parent_index:
+                    if parent_index is not None:
                         flattened[table_name]["parent_index"] = parent_index
                     result.append(flattened)
                     index += 1
         return result
+
+    def insert_to_db(self, data, con):
+        result = self.flatten_dict(data["body"])
+        del data["body"]
+        cur = con.cursor()
+        orm_instances = []
+        for key in data:
+            result[0][self.root_table_name][key] = data[key]
+        for item in result:
+            for key, value in item.items():
+                parent_id = 1
+                parent_table = None
+                if "parent_index" in value:
+                    parent_table = next(iter(result[value["parent_index"]]))
+                    cur.execute(f"SELECT MAX(id) FROM {parent_table}")
+                    parent_id = cur.fetchone()[0]
+                    del value["parent_index"]
+                orm_instance = self.orms[key](**value)
+                if parent_table:
+                    setattr(orm_instance, parent_table, parent_id)
+                orm_instances.append(orm_instance)
+        return orm_instances
