@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Float, Integer, String, Boolean, Enum, ForeignKey
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker
 from jsonschema import Draft7Validator
 from collections import deque
 from jsonschema.exceptions import SchemaError
@@ -10,17 +10,23 @@ Base = declarative_base()
 
 
 class JSONSchemaToPostgres():
-    def __init__(self, hostname, schema, root_table_name=None, api_type=None):
+    def __init__(self, hostname, schema, engine, root_table_name=None, api_type=None):
         self.hostname = hostname
         self.schema = schema
         if root_table_name is None:
             self.root_table_name = hostname
         else:
             self.root_table_name = root_table_name
+        self.tables_max_id = {}
         self.api_type = api_type
         self.validate_schema()
+        self.engine = engine
         self.orms = self.generate_basic_orm()
-        
+        self.create_tables()
+        Session = sessionmaker(bind=engine)
+        with Session() as session:
+            self.get_tables_max_id(session)
+
     def validate_schema(self):
         try:
             # 验证 schema 是否符合标准
@@ -33,7 +39,7 @@ class JSONSchemaToPostgres():
         # 初始化队列进行层序遍历，存储表格及其父表的相关信息，仅使用基本类型
         # 以下规则中，非基本类型指的是 array 或 object
         # 规则1：array 的 items 只有两种形式，一种为结构体数组，一种为指定位置为基本类型的数组
-        # 规则2：禁止使用id关键字
+        # 规则2：禁止使用id, parent_id, parent_index关键字
         # 规则3：不支持 oneof 或 allof 以及 additionalProperties
         # 生成规则1：如果最外层一定会生成一个表root_table_name
         # 生成规则2：如果为结构体数组，则不会生成对应的表，而是生成table_name_item作为存储结构体的表
@@ -235,6 +241,9 @@ class JSONSchemaToPostgres():
             attrs[column_name] = column
         return type(table_name, (Base,), attrs)
 
+    def create_tables(self):
+        Base.metadata.create_all(self.engine)
+
     def flatten_dict(self, data):
         result = []
         stack = [(data, self.root_table_name, None)]
@@ -275,24 +284,32 @@ class JSONSchemaToPostgres():
                     index += 1
         return result
 
-    def insert_to_db(self, data, con):
+    def preprocessing_data(self, data):
         result = self.flatten_dict(data["body"])
         del data["body"]
-        cur = con.cursor()
         orm_instances = []
         for key in data:
             result[0][self.root_table_name][key] = data[key]
         for item in result:
             for key, value in item.items():
-                parent_id = 1
+                parent_id = None
                 parent_table = None
                 if "parent_index" in value:
                     parent_table = next(iter(result[value["parent_index"]]))
-                    cur.execute(f"SELECT MAX(id) FROM {parent_table}")
-                    parent_id = cur.fetchone()[0]
+                    parent_id = self.tables_max_id[parent_table]
                     del value["parent_index"]
                 orm_instance = self.orms[key](**value)
-                if parent_table:
-                    setattr(orm_instance, parent_table, parent_id)
+                if parent_id:
+                    setattr(orm_instance, f"{parent_table}_id", parent_id)
                 orm_instances.append(orm_instance)
+                self.tables_max_id[key] += 1
         return orm_instances
+
+    def insert_to_db(self, data, session):
+        session.add_all(self.preprocessing_data(data))
+        session.commit()
+
+    def get_tables_max_id(self, session):
+        for table_name, _ in self.orms.items():
+            result = session.execute(f"SELECT MAX(id) FROM {table_name}").scalar()
+            self.tables_max_id[table_name] = result if result is not None else 0
