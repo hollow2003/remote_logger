@@ -18,6 +18,8 @@ class JSONSchemaToPostgres():
         else:
             self.root_table_name = root_table_name
         self.tables_max_id = {}
+        self.parent_relation = {}
+        self.parent_index = {}
         self.api_type = api_type
         self.validate_schema()
         self.engine = engine
@@ -42,8 +44,7 @@ class JSONSchemaToPostgres():
         # 规则2：禁止使用id, parent_id, parent_index关键字
         # 规则3：不支持 oneof 或 allof 以及 additionalProperties
         # 生成规则1：如果最外层一定会生成一个表root_table_name
-        # 生成规则2：如果为结构体数组，则不会生成对应的表，而是生成table_name_item作为存储结构体的表
-        # 生成规则3：如果结构体内没有基本类型，则不会生成table_name，而是继续处理内部的非基本类型
+        # 生成规则2：如果为结构体数组，则生成table_name_item作为存储结构体的表,同时生成名为table_name的表
         node_queue = deque([(self.schema, self.root_table_name, None)])
         orm_classes = {}
 
@@ -153,43 +154,30 @@ class JSONSchemaToPostgres():
                 columns["timeout"] = Column("timeout", Integer)
                 columns["status_code"] = Column("status_code", Integer)
         """生成 ORM 类并将子节点加入队列"""
-        if columns:
-            # 如果有父表，添加外键
-            if parent_table:
-                columns[f"{parent_table}_id"] = ForeignKey(
-                    f"{parent_table}.id"
-                )
-                orm_classes[
-                    table_name
-                ] = self.create_orm_class(
-                    table_name, columns
-                )
-            else:
-                orm_classes[table_name] = self.create_orm_class(
-                    table_name,
-                    columns
-                )
-
-            # 加入子节点
-            for sub_node, sub_table_name in sub_nodes:
-                node_queue.append((
-                    sub_node,
-                    sub_table_name,
-                    table_name)
-                )
-
+        # 如果有父表，添加外键
+        if parent_table:
+            columns[f"{parent_table}_id"] = Column(f"{parent_table}_id", Integer, ForeignKey(
+                f"{parent_table}.id"
+            ))
+            self.parent_relation[table_name] = f"{parent_table}_id"
+            orm_classes[
+                table_name
+            ] = self.create_orm_class(
+                table_name, columns
+            )
         else:
             orm_classes[table_name] = self.create_orm_class(
-                    table_name,
-                    columns
-                )
-            for sub_node, sub_table_name in sub_nodes:
-                node_queue.append((
-                    sub_node,
-                    sub_table_name,
-                    parent_table
-                    )
-                )
+                table_name,
+                columns
+            )
+
+        # 加入子节点
+        for sub_node, sub_table_name in sub_nodes:
+            node_queue.append((
+                sub_node,
+                sub_table_name,
+                table_name)
+            )
 
     def get_basic_type(self, schema_item):
         """根据 schema 类型返回 SQLAlchemy 类型"""
@@ -246,46 +234,53 @@ class JSONSchemaToPostgres():
 
     def flatten_dict(self, data):
         result = []
-        stack = [(data, self.root_table_name, None)]
-        index = -1
-        while stack:
-            current, table_name, parent_index = stack.pop()
+        cur_stack = [(data, self.root_table_name, None)]
+        next_stack = []
+        while cur_stack:
+            current, table_name, parent_index = cur_stack.pop()
             if isinstance(current, dict):
+                self.tables_max_id[table_name] += 1
                 flattened = {table_name: {}}
                 for key, value in current.items():
                     if isinstance(value, dict) or isinstance(value, list):
                         # 如果值是字典，则将该字典继续添加到队列中
-                        stack.append((value, table_name + '_' + key, index))
+                        next_stack.append((value, table_name + '_' + key, self.tables_max_id[table_name]))
                     else:
                         # 如果值是基本类型，直接添加到当前扁平化字典
                         flattened[table_name][key] = value
+                if parent_index is not None:
+                    flattened[table_name][self.parent_relation[table_name]] = parent_index
                 if flattened[table_name] != {} or table_name == self.root_table_name:
                     # 将当前层的扁平字典添加到结果中
-                    if parent_index is not None:
-                        flattened[table_name]["parent_index"] = parent_index
                     result.append(flattened)
-                    index += 1
             elif isinstance(current, list):
-                flattened = {}
+                self.tables_max_id[table_name] += 1
+                flattened = {table_name: {}}
                 temp = []
                 for item in current:
                     if isinstance(item, dict) or isinstance(item, list):
                         # 如果值是字典，则将该字典继续添加到队列中
-                        stack.append((item, table_name + "_item", index))
+                        next_stack.append((item, table_name + "_item", self.tables_max_id[table_name]))
                     else:
                         temp.append(item)
                 if temp != []:
                     flattened[table_name] = temp
-                if flattened != {}:
+                if parent_index is not None:
+                    flattened[table_name][self.parent_relation[table_name]] = parent_index
+                if flattened != {} or table_name == self.root_table_name:
                     # 将当前层的扁平字典添加到结果中
-                    if parent_index is not None:
-                        flattened[table_name]["parent_index"] = parent_index
                     result.append(flattened)
-                    index += 1
+            if not cur_stack and next_stack:
+                temp_stack = []
+                while next_stack:
+                    temp_stack.append(next_stack.pop())
+                while temp_stack:
+                    cur_stack.append(temp_stack.pop())
         return result
 
     def preprocessing_data(self, data):
         result = self.flatten_dict(data["body"])
+        print(result)
         del data["body"]
         orm_instances = []
         for key in data:
@@ -306,8 +301,9 @@ class JSONSchemaToPostgres():
         return orm_instances
 
     def insert_to_db(self, data, session):
-        session.add_all(self.preprocessing_data(data))
-        session.commit()
+        if (Draft7Validator(self.schema).is_valid(data.get("body"))):
+            session.add_all(self.preprocessing_data(data))
+            session.commit()
 
     def get_tables_max_id(self, session):
         for table_name, _ in self.orms.items():
