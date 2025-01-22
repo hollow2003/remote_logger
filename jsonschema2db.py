@@ -9,7 +9,7 @@ import enum
 Base = declarative_base()
 
 
-class JSONSchemaToPostgres():
+class JSONSchemaToSqlite3():
     def __init__(self, hostname, schema, engine, root_table_name=None, api_type=None):
         self.hostname = hostname
         self.schema = schema
@@ -309,3 +309,10 @@ class JSONSchemaToPostgres():
         for table_name, _ in self.orms.items():
             result = session.execute(f"SELECT MAX(id) FROM {table_name}").scalar()
             self.tables_max_id[table_name] = result if result is not None else 0
+
+    def insert_all_to_db(self, data, session):
+        if type(data) is not list:
+            return "data need to be list"
+        else:
+            for i in range(0, len(data)):
+                self.insert_to_db(data[i], session)
