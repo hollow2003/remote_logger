@@ -1,57 +1,58 @@
 {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-          "loginfo": {
-            "type": "object",
-            "properties":{
-                "functionName": {
-                     "type": "string",
-                     "description": "需要记录日志的函数名",
-                     "examples": ["checkSystemStatus"]
-                  },
-                  "checkpointName": {
-                     "type": "string",
-                     "description": "检查点名称",
-                     "examples": ["初始化"]
-                  },
-                  "logLevel": {
-                     "type": "string",
-                     "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-                     "description": "日志级别",
-                     "default": "INFO"
+	"name":"moving_robot",
+	"API": [
+{
+         "name": "unix",
+         "protocol": "unix",
+         "path": "/home/hpr/consul/services/robot",
+         "flushInterval": 1,
+         "bufferSize": 4096,
+         "maxMsgNum": 10,
+         "logLevel": "DEBUG",
+         "schema":{
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+              "studentId": {
+                  "type": "string"
+              },
+              "name": {
+                  "type": "string"
+              },
+              "courses": {
+                  "type": "array",
+                  "items": {
+                      "type": "object",
+                      "properties": {
+                          "courseId": {
+                              "type": "string"
+                          },
+                          "courseName": {
+                              "type": "string"
+                          },
+                          "grades": {
+                              "type": "array",
+                              "items": {
+                                  "type": "object",
+                                  "properties": {
+                                      "examType": {
+                                          "type": "string"
+                                      },
+                                      "grade": {
+                                          "type": "string"
+                                      }
+                                  },
+                                  "required": ["examType", "grade"]
+                              }
+                          }
+                      },
+                      "required": ["courseId", "courseName", "grades"]
                   }
-            },
-            "additionalProperties": false,
-            "required": [
-                   "functionName",
-                   "checkpointName"
-             ]
-        },
-          "Position": {
-             "type": "object",
-             "properties": {
-                   "x": {
-                      "type": "number"
-                   },
-                   "y": {
-                      "type": "number"
-                   },
-                   "raw": {
-                      "type": "number"
-                   }
-             },
-             "additionalProperties": false,
-             "required": [
-                   "x",
-                   "y",
-                   "raw"
-             ]
-          }
-    },
-    "additionalProperties": false,
-    "required": [
-          "logInfo",
-          "Position"
-    ]
- }
+              }
+          },
+          "required": ["studentId", "name", "courses"]
+          },
+         "message": "{functionName} 在 {checkpointName} 检查点时位于: x: {position.x}, y: {position.y} raw: {position.raw}"
+}
+]
+}
