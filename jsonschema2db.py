@@ -153,6 +153,8 @@ class JSONSchemaToSqlite3():
                 columns["interval"] = Column("interval", Integer)
                 columns["timeout"] = Column("timeout", Integer)
                 columns["status_code"] = Column("status_code", Integer)
+            elif self.api_type == "unix":
+                columns["interval"] = Column("interval", Integer)
         """生成 ORM 类并将子节点加入队列"""
         # 如果有父表，添加外键
         if parent_table:
@@ -304,15 +306,20 @@ class JSONSchemaToSqlite3():
         if (Draft7Validator(self.schema).is_valid(data.get("body"))):
             session.add_all(self.preprocessing_data(data))
             session.commit()
+        else:
+            print("valiate failed")
 
     def get_tables_max_id(self, session):
         for table_name, _ in self.orms.items():
             result = session.execute(f"SELECT MAX(id) FROM {table_name}").scalar()
             self.tables_max_id[table_name] = result if result is not None else 0
 
-    def insert_all_to_db(self, data, session):
+    def insert_all_to_db(self, data, session, protocol):
         if type(data) is not list:
             return "data need to be list"
         else:
             for i in range(0, len(data)):
-                self.insert_to_db(data[i], session)
+                if protocol == "redis":
+                    self.insert_to_db({"body": data[i]}, session)
+                else:
+                    self.insert_to_db(data[i], session)

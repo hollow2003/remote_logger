@@ -1,0 +1,176 @@
+{
+   "id": 123456,
+   "kind": "Ability",
+   "name": "moving_robot",
+   "process": "/usr/bin/python3.8 main.py",
+   "port": 10800,
+   "locate": {
+      "address": "192.168.114.128",
+      "MAC": "00:00:00:00:00:00"
+   },
+   "API": [
+      {
+         "name": "unix",
+         "protocol": "unix",
+         "path": "/home/hpr/consul/services/robot",
+         "flushInterval": 1,
+         "bufferSize": 4096,
+         "maxMsgNum": 10,
+         "logLevel": "DEBUG",
+         "schema":{
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                  "loginfo": {
+                     "type": "object",
+		     "properties":{
+			 "functionName": {
+			      "type": "string",
+			      "description": "需要记录日志的函数名",
+			      "examples": ["checkSystemStatus"]
+			   },
+			   "checkpointName": {
+			      "type": "string",
+			      "description": "检查点名称",
+			      "examples": ["初始化"]
+			   },
+			   "logLevel": {
+			      "type": "string",
+			      "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+			      "description": "日志级别",
+			      "default": "INFO"
+			   }
+		     },
+		     "additionalProperties": false,
+		     "required": [
+		 	   "functionName",
+		 	   "checkpointName"
+		      ]
+                   },
+                  "Position": {
+                     "type": "object",
+                     "properties": {
+                           "x": {
+                              "type": "number"
+                           },
+                           "y": {
+                              "type": "number"
+                           },
+                           "raw": {
+                              "type": "number"
+                           }
+                     },
+                     "additionalProperties": false,
+                     "required": [
+                           "x",
+                           "y",
+                           "raw"
+                     ]
+                  }
+            },
+            "additionalProperties": false,
+            "required": [
+                  "logInfo",
+                  "Position"
+            ]
+         },
+         "message": "{functionName} 在 {checkpointName} 检查点时位于: x: {position.x}, y: {position.y} raw: {position.raw}"
+      },
+      {
+         "name": "redis",
+         "protocol": "redis",
+         "port": "6379",
+         "key": "moving_robot",
+         "method": "LPOP",
+         "flushInterval": 1,
+         "bufferSize": 4096,
+         "maxMsgNum": 10,
+         "schema":{
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+                  "loginfo": {
+                     "type": "object",
+		     "properties":{
+			 "functionName": {
+			      "type": "string",
+			      "description": "需要记录日志的函数名",
+			      "examples": ["checkSystemStatus"]
+			   },
+			   "checkpointName": {
+			      "type": "string",
+			      "description": "检查点名称",
+			      "examples": ["初始化"]
+			   },
+			   "logLevel": {
+			      "type": "string",
+			      "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+			      "description": "日志级别",
+			      "default": "INFO"
+			   }
+		     },
+		     "additionalProperties": false,
+		     "required": [
+		 	   "functionName",
+		 	   "checkpointName"
+		      ]
+                   },
+                  "Position": {
+                     "type": "object",
+                     "properties": {
+                           "x": {
+                              "type": "number"
+                           },
+                           "y": {
+                              "type": "number"
+                           },
+                           "raw": {
+                              "type": "number"
+                           }
+                     },
+                     "additionalProperties": false,
+                     "required": [
+                           "x",
+                           "y",
+                           "raw"
+                     ]
+                  }
+            },
+            "additionalProperties": false,
+            "required": [
+                  "loginfo",
+                  "Position"
+            ]
+         },
+         "message": "{functionName} 在 {checkpointName} 检查点时位于:  x: {position.x}, y: {position.y} raw: {position.raw}"
+      },
+      {
+         "name": "http",
+         "protocol": "http",
+         "method": "GET",
+         "port": "10800",
+         "path": "/heartbeat",
+         "interval": 1,
+         "timeout": 5,
+         "bufferSize": 1024,
+         "maxMsgNum": 10,
+         "logLevel": "INFO",
+         "schema":{
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "properties": {
+               "status": {
+                  "type": "string",
+                  "enum": ["OK", "ERROR"],
+                  "description": "心跳状态"
+               }
+            },
+            "additionalProperties": false,
+            "required": [
+               "status"
+            ]
+        },
+         "message": "{functionName} 在 {checkpointName} 检查点: {status}"
+      }
+   ]
+}

@@ -1,5 +1,5 @@
 import requests
-
+import json
 
 class RemoteSidecarLauncher():
     def __init__(
@@ -26,7 +26,7 @@ class RemoteSidecarLauncher():
             "target_redis_port": self.target_redis_port
             }
         try:
-            response = requests.post(self.remote_sidecar_launcher_ip, data)
+            response = requests.post(self.remote_sidecar_launcher_ip, json.dumps(data))
             print(response.json())
         except Exception as e:
             print('Failed to launch remote sidecar: %s' % (e))

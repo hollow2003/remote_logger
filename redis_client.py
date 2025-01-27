@@ -11,6 +11,7 @@ class RedisClient():
         tmp = self.client.lpop(key)
         result = []
         while tmp:
+            print(tmp)
             result.append(json.loads(tmp))
             tmp = self.client.lpop(key)
         return result
