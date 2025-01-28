@@ -1,5 +1,6 @@
 import threading
 import json
+import time
 from redis_client import RedisClient
 from jsonschema2db import JSONSchemaToSqlite3
 from sqlalchemy import create_engine
@@ -25,8 +26,7 @@ def launchRemoteSidecar():
             "target_redis_address" not in data or\
             "target_redis_port" not in data or\
             "remote_sidecar_launcher_ip" not in data or\
-	    "local_config_path" not in data:
-
+            "local_config_path" not in data:
         return "Missing Required Parameter"
     else:
         load_config_file(data.get("local_config_path"))
@@ -54,6 +54,17 @@ def data_synchronize():
         schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, session, data["protocol"])
         return "Syn Data Success"
 
+@app.route('/delete_host_config', methods=['POST'])
+def delete_host_config():
+    data = json.loads(request.data)
+    if "hostname" not in data:
+        return "Missing required para!"
+    elif data.get("hostname") not in schema2db:
+        return "host not found"
+    else:
+        del schema2db[data.get("hostname")]
+        return "del success"
+
 
 def load_config_file(config_file_path):
     with open(config_file_path, 'r', encoding='UTF-8') as f:
@@ -61,6 +72,8 @@ def load_config_file(config_file_path):
         if "name" not in load_dict or "API" not in load_dict:
             print("Missing required para in config file")
             return "Missing required para in config file"
+        if load_dict.get("name") in schema2db:
+            return
         schema2db[load_dict.get("name")] = {}
         for item in load_dict["API"]:
             if item.get("protocol") == "unix":
@@ -77,53 +90,5 @@ def load_config_file(config_file_path):
 
 
 if __name__ == '__main__':
-# 加载 JSON schema
-
-    schema = {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "type": "object",
-          "properties": {
-              "studentId": {
-                  "type": "string"
-              },
-              "name": {
-                  "type": "string"
-              },
-              "courses": {
-                  "type": "array",
-                  "items": {
-                      "type": "object",
-                      "properties": {
-                          "courseId": {
-                              "type": "string"
-                          },
-                          "courseName": {
-                              "type": "string"
-                          },
-                          "grades": {
-                              "type": "array",
-                              "items": {
-                                  "type": "object",
-                                  "properties": {
-                                      "examType": {
-                                          "type": "string"
-                                      },
-                                      "grade": {
-                                          "type": "string"
-                                      }
-                                  },
-                                  "required": ["examType", "grade"]
-                              }
-                          }
-                      },
-                      "required": ["courseId", "courseName", "grades"]
-                  }
-              }
-          },
-          "required": ["studentId", "name", "courses"]
-    }
-    # load_config_file('/home/hpr/consul/remote_logger/test.json')
-    # print(schema2db)
-    # print(json_to_pg.insert_to_db({"interval": 1, "body": {"studentId": "1", "name": "1", "courses": [{"courseId": "C001", "courseName": "Mathematics", "grades": [{"examType": "Midterm1", "grade": "A"}, {"examType": "Final1", "grade": "B+"}]}, {"courseId": "C002", "courseName": "Physics", "grades": [{"examType": "Midterm", "grade": "B"}, {"examType": "Final", "grade": "A"}]}]}}, session))
-    # {'loginfo': {'functionName': 'string', 'checkpointName': 'string', 'logLevel': 'string'}, 'Position': {'x': 'number', 'y': 'number', 'raw': 'number'}}
+    threading.Thread(target=remoteSidecarLauncher.launch_remote_sidecar, args=()).start()
     app.run(host="0.0.0.0", port=6400)
