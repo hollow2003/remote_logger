@@ -1,7 +1,7 @@
 # REMOTE logger手册
 ------
 ## 1. 简介
-* 本项目旨在开发一种基于灵活数据规范的可配置的边缘计算日志采集系统。该系统的主要架构如下图所示。![系统整体架构图](https://github.com/hollow2003/edge_sidecarlogger/blob/using_thread/c16911b58c12b2001c1df725983dc67.png)。该仓库代码用于作为中心日志收集端配合sidecar_logger使用。
+* 本项目旨在开发一种基于灵活数据规范的可配置的边缘计算日志采集系统。该系统的主要架构如下图所示。![系统整体架构图](https://github.com/hollow2003/edge_sidecarlogger/blob/using_thread/pics/c72dbcd1ca4e3e255cd4a03cc63f21b.png)该仓库代码用于作为中心日志收集端配合sidecar_logger使用。
 ### 1.1. jsonschema2db
 * 该模块用于将**json schema**转换为数据库表结构并创建表，以及将数据进行处理后存入数据库，具体的算法如下。
 #### 1.1.1. **json schema**转换为数据库表结构算法伪代码
