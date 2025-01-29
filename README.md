@@ -314,4 +314,4 @@ sudo pip3 install flask
 }
 ```
 ### 3.2. 生成的数据库结构
-见。
+见https://github.com/hollow2003/remote_logger/blob/master/print.pdf。
