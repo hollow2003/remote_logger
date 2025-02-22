@@ -15,6 +15,7 @@ app = Flask(__name__)
 redisClient = RedisClient()
 schema2db = {}
 
+
 @app.route('/launch_remote_sidecar', methods=['POST'])
 def launchRemoteSidecar():
     data = json.loads(request.data)
@@ -54,6 +55,7 @@ def data_synchronize():
         schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, session, data["protocol"])
         return "Syn Data Success"
 
+
 @app.route('/delete_host_config', methods=['POST'])
 def delete_host_config():
     data = json.loads(request.data)
@@ -90,5 +92,4 @@ def load_config_file(config_file_path):
 
 
 if __name__ == '__main__':
-    threading.Thread(target=remoteSidecarLauncher.launch_remote_sidecar, args=()).start()
     app.run(host="0.0.0.0", port=6400)

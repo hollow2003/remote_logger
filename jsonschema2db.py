@@ -40,7 +40,7 @@ class JSONSchemaToSqlite3():
     def generate_basic_orm(self):
         # 初始化队列进行层序遍历，存储表格及其父表的相关信息，仅使用基本类型
         # 以下规则中，非基本类型指的是 array 或 object
-        # 规则1：array 的 items 只有两种形式，一种为结构体数组，一种为指定位置为基本类型的数组
+        # 规则1：array 的 items 只有三种形式，一种为item为object的数组，一种为长度确定，指定位置为基本类型的数组，以及类型统一类型的数组。对于类型统一类型的数组如果需要限制长度，需要使用minItems和 maxItems关键字指定数组的长度。
         # 规则2：禁止使用id, parent_id, parent_index关键字
         # 规则3：不支持 oneof 或 allof 以及 additionalProperties
         # 生成规则1：如果最外层一定会生成一个表root_table_name
@@ -133,6 +133,19 @@ class JSONSchemaToSqlite3():
             if items_schema.get("type") in ["object", "array"]:
                 sub_table_name = f"{table_name}_item"
                 sub_nodes.append((items_schema, sub_table_name))
+            else:
+                if "enum" in items_schema:
+                    column_type = self.handle_enum(
+                        f"{table_name}_item", items_schema
+                    )
+                else:
+                    # 不是 enum 类型时，使用基本类型
+                    column_type = self.get_basic_type(items_schema.get("type"))
+                columns[f"{table_name}_item"] = Column(
+                    f"{table_name}_item",
+                    column_type,
+                    nullable=False
+                )
 
         self.create_and_add_orm_class(
             columns,
@@ -187,7 +200,8 @@ class JSONSchemaToSqlite3():
             "string": String,
             "integer": Integer,
             "boolean": Boolean,  # 可用 Integer 或 Boolean
-            "float": Float
+            "float": Float,
+            "number": Integer
         }
         return type_mapping.get(schema_item, String)  # 默认使用 String 类型
 
@@ -240,9 +254,9 @@ class JSONSchemaToSqlite3():
         next_stack = []
         while cur_stack:
             current, table_name, parent_index = cur_stack.pop()
+            self.tables_max_id[table_name] += 1
+            flattened = {table_name: {}}
             if isinstance(current, dict):
-                self.tables_max_id[table_name] += 1
-                flattened = {table_name: {}}
                 for key, value in current.items():
                     if isinstance(value, dict) or isinstance(value, list):
                         # 如果值是字典，则将该字典继续添加到队列中
@@ -252,37 +266,51 @@ class JSONSchemaToSqlite3():
                         flattened[table_name][key] = value
                 if parent_index is not None:
                     flattened[table_name][self.parent_relation[table_name]] = parent_index
-                if flattened[table_name] != {} or table_name == self.root_table_name:
-                    # 将当前层的扁平字典添加到结果中
-                    result.append(flattened)
+                result.append(flattened)
             elif isinstance(current, list):
-                self.tables_max_id[table_name] += 1
-                flattened = {table_name: {}}
-                temp = []
+                temp = {}
+                same_type_flag = 1
+                void_flag = 0
+                data_type = type(current[0])
+                for item in current:
+                    if type(item) is not data_type:
+                        same_type_flag = 0
+                        break
                 for item in current:
                     if isinstance(item, dict) or isinstance(item, list):
                         # 如果值是字典，则将该字典继续添加到队列中
                         next_stack.append((item, table_name + "_item", self.tables_max_id[table_name]))
+                        if void_flag == 0:
+                            result.append(flattened)
+                            void_flag = 1
                     else:
-                        temp.append(item)
-                if temp != []:
-                    flattened[table_name] = temp
-                if parent_index is not None:
-                    flattened[table_name][self.parent_relation[table_name]] = parent_index
-                if flattened != {} or table_name == self.root_table_name:
-                    # 将当前层的扁平字典添加到结果中
-                    result.append(flattened)
+                        if same_type_flag == 0:
+                            index = 0
+                            for inner_item in current:
+                                temp[table_name + "_item_" + str(index)] = inner_item
+                                index += 1
+                            if parent_index is not None:
+                                temp[self.parent_relation[table_name]] = parent_index
+                            flattened[table_name] = temp
+                            result.append(flattened)
+                        else:
+                            for inner_item in current:
+                                flattened = {table_name: {table_name + "_item": inner_item}}
+                                if parent_index is not None:
+                                    flattened[table_name][self.parent_relation[table_name]] = parent_index
+                                result.append(flattened)
+                        break
             if not cur_stack and next_stack:
                 temp_stack = []
                 while next_stack:
                     temp_stack.append(next_stack.pop())
                 while temp_stack:
                     cur_stack.append(temp_stack.pop())
+        print(result)
         return result
 
     def preprocessing_data(self, data):
         result = self.flatten_dict(data["body"])
-        print(result)
         del data["body"]
         orm_instances = []
         for key in data:
