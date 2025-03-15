@@ -1,16 +1,13 @@
-from sqlalchemy import Column, Float, Integer, String, Boolean, Enum, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker
 from jsonschema import Draft7Validator
 from collections import deque
 from jsonschema.exceptions import SchemaError
+import sqlite3
+from collections import deque
 import enum
-
-
-Base = declarative_base()
-
+import json
 
 class JSONSchemaToSqlite3():
-    def __init__(self, hostname, schema, engine, root_table_name=None, api_type=None):
+    def __init__(self, hostname, schema, db_path, root_table_name=None, api_type=None):
         self.hostname = hostname
         self.schema = schema
         if root_table_name is None:
@@ -19,15 +16,11 @@ class JSONSchemaToSqlite3():
             self.root_table_name = root_table_name
         self.tables_max_id = {}
         self.parent_relation = {}
-        self.parent_index = {}
         self.api_type = api_type
         self.validate_schema()
-        self.engine = engine
-        self.orms = self.generate_basic_orm()
+        self.db_path = db_path
+        self.tables = self.generate_table_definitions()
         self.create_tables()
-        Session = sessionmaker(bind=engine)
-        with Session() as session:
-            self.get_tables_max_id(session)
 
     def validate_schema(self):
         try:
@@ -37,16 +30,10 @@ class JSONSchemaToSqlite3():
         except SchemaError as e:
             print(f"Schema 无效: {e.message}")
 
-    def generate_basic_orm(self):
-        # 初始化队列进行层序遍历，存储表格及其父表的相关信息，仅使用基本类型
-        # 以下规则中，非基本类型指的是 array 或 object
-        # 规则1：array 的 items 只有三种形式，一种为item为object的数组，一种为长度确定，指定位置为基本类型的数组，以及类型统一类型的数组。对于类型统一类型的数组如果需要限制长度，需要使用minItems和 maxItems关键字指定数组的长度。
-        # 规则2：禁止使用id, parent_id, parent_index关键字
-        # 规则3：不支持 oneof 或 allof 以及 additionalProperties
-        # 生成规则1：如果最外层一定会生成一个表root_table_name
-        # 生成规则2：如果为结构体数组，则生成table_name_item作为存储结构体的表,同时生成名为table_name的表
+    def generate_table_definitions(self):
+        """生成表定义，基于 JSON Schema"""
         node_queue = deque([(self.schema, self.root_table_name, None)])
-        orm_classes = {}
+        tables = {}
 
         while node_queue:
             columns = {}
@@ -57,30 +44,20 @@ class JSONSchemaToSqlite3():
 
             if schema_type == "object":
                 self.process_object_type(
-                    current_schema,
-                    columns, sub_nodes,
-                    table_name,
-                    parent_table,
-                    orm_classes,
-                    node_queue
+                    current_schema, columns, sub_nodes, table_name,
+                    parent_table, tables, node_queue
                 )
-
             elif schema_type == "array":
                 self.process_array_type(
-                    current_schema,
-                    columns,
-                    sub_nodes,
-                    table_name,
-                    parent_table,
-                    orm_classes,
-                    node_queue
+                    current_schema, columns, sub_nodes, table_name,
+                    parent_table, tables, node_queue
                 )
 
-        return orm_classes
+        return tables
 
     def process_object_type(
             self, current_schema, columns, sub_nodes, table_name,
-            parent_table, orm_classes, node_queue
+            parent_table, tables, node_queue
     ):
         """处理对象类型 schema"""
         for key, value in current_schema.get("properties", {}).items():
@@ -93,23 +70,15 @@ class JSONSchemaToSqlite3():
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(value.get("type"))
-                columns[key] = Column(
-                    key,
-                    column_type,
-                    nullable=("required" not in current_schema or key not in current_schema.get("required"))
-                )
-
-        self.create_and_add_orm_class(
-            columns, sub_nodes,
-            table_name,
-            parent_table,
-            orm_classes,
-            node_queue
-        )
+                columns[key] = column_type
+        additional_properties = current_schema.get("additionalProperties", False)
+        if additional_properties:
+            columns["additionalProperties"] = "TEXT"  # 存储额外属性的 JSON 字符串
+        self.add_table_definition(columns, sub_nodes, table_name, parent_table, tables, node_queue)
 
     def process_array_type(
             self, current_schema, columns, sub_nodes,
-            table_name, parent_table, orm_classes, node_queue
+            table_name, parent_table, tables, node_queue
     ):
         """处理数组类型 schema"""
         items_schema = current_schema.get("items")
@@ -123,11 +92,7 @@ class JSONSchemaToSqlite3():
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(item.get("type"))
-                columns[f"{table_name}_item_{index}"] = Column(
-                    f"{table_name}_item_{index}",
-                    column_type,
-                    nullable=False
-                )
+                columns[f"{table_name}_item_{index}"] = column_type
                 index += 1
         elif isinstance(items_schema, dict):
             if items_schema.get("type") in ["object", "array"]:
@@ -141,153 +106,140 @@ class JSONSchemaToSqlite3():
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(items_schema.get("type"))
-                columns[f"{table_name}_item"] = Column(
-                    f"{table_name}_item",
-                    column_type,
-                    nullable=False
-                )
+                columns[f"{table_name}_item"] = column_type
 
-        self.create_and_add_orm_class(
-            columns,
-            sub_nodes,
-            table_name,
-            parent_table,
-            orm_classes,
-            node_queue
-        )
+        self.add_table_definition(columns, sub_nodes, table_name, parent_table, tables, node_queue)
 
-    def create_and_add_orm_class(
-            self, columns, sub_nodes, table_name,
-            parent_table, orm_classes, node_queue
-    ):
-        columns["id"] = Column("id", Integer, primary_key=True)
+    def add_table_definition(self, columns, sub_nodes, table_name, parent_table, tables, node_queue):
+        """添加表定义，包括主键和外键"""
+        columns["id"] = "INTEGER PRIMARY KEY"
         if table_name == self.root_table_name:
             if self.api_type == "http":
-                columns["interval"] = Column("interval", Integer)
-                columns["timeout"] = Column("timeout", Integer)
-                columns["status_code"] = Column("status_code", Integer)
+                columns["interval"] = "INTEGER"
+                columns["timeout"] = "INTEGER"
+                columns["status_code"] = "INTEGER"
             elif self.api_type == "unix":
-                columns["interval"] = Column("interval", Integer)
-        """生成 ORM 类并将子节点加入队列"""
-        # 如果有父表，添加外键
+                columns["interval"] = "INTEGER"
         if parent_table:
-            columns[f"{parent_table}_id"] = Column(f"{parent_table}_id", Integer, ForeignKey(
-                f"{parent_table}.id"
-            ))
+            columns[f"{parent_table}_id"] = "INTEGER"
             self.parent_relation[table_name] = f"{parent_table}_id"
-            orm_classes[
-                table_name
-            ] = self.create_orm_class(
-                table_name, columns
-            )
-        else:
-            orm_classes[table_name] = self.create_orm_class(
-                table_name,
-                columns
-            )
+        tables[table_name] = columns
 
-        # 加入子节点
         for sub_node, sub_table_name in sub_nodes:
-            node_queue.append((
-                sub_node,
-                sub_table_name,
-                table_name)
-            )
+            node_queue.append((sub_node, sub_table_name, table_name))
 
     def get_basic_type(self, schema_item):
         """根据 schema 类型返回 SQLAlchemy 类型"""
         type_mapping = {
-            "string": String,
-            "integer": Integer,
-            "boolean": Boolean,  # 可用 Integer 或 Boolean
-            "float": Float,
-            "number": Integer
+            "string": "TEXT",
+            "integer": "INTEGER",
+            "boolean": "TEXT",  # 可用 Integer 或 Boolean
+            "float": "REAL",
+            "number": "INTEGER"
         }
-        return type_mapping.get(schema_item, String)  # 默认使用 String 类型
+        return type_mapping.get(schema_item, "TEXT")  # 默认使用 String 类型
 
     def handle_enum(self, key, value):
-        """
-        Handles enum types.
-        """
         enum_values = value.get("enum", [])
-        enum_type = value.get("type", "string")  
-        # Default to string type for enum
-
-        if enum_type == "string":
-            EnumType = enum.Enum(
-                f"{key.capitalize()}_Enum", enum_values, type=str
-            )
-        elif enum_type == "integer":
-            # If enum is of integer type
-            enum_values = [int(v) for v in enum_values]
-            EnumType = enum.Enum(
-                f"{key.capitalize()}_Enum", enum_values, type=int
-            )
-        elif enum_type == "number":
-            # If enum is of number type
-            enum_values = [float(v) for v in enum_values]
-            EnumType = enum.Enum(
-                f"{key.capitalize()}_Enum", enum_values, type=float
-            )
-
-        # Return SQLAlchemy Enum type
-        return Enum(EnumType)
-
-    def create_orm_class(self, table_name, columns):
-        """根据字段创建 ORM 类"""
-        print(table_name)
-        print(columns)
-        attrs = {
-            '__tablename__': table_name,
-            '__classname__': table_name
-        }
-        for column_name, column in columns.items():
-            attrs[column_name] = column
-        return type(table_name, (Base,), attrs)
+        if enum_values:
+            # 生成 CHECK 约束的条件
+            conditions = []
+            for v in enum_values:
+                if isinstance(v, str):
+                    # 转义字符串中的单引号
+                    escaped_v = v.replace("'", "''")
+                    conditions.append(f"'{escaped_v}'")
+                elif isinstance(v, (int, float)):
+                    # 数字直接转为字符串
+                    conditions.append(str(v))
+                elif isinstance(v, bool):
+                    # 布尔值转为 1 或 0
+                    conditions.append("1" if v else "0")
+                else:
+                    raise ValueError(f"不支持的枚举类型: {type(v)}")
+            check_constraint = f"CHECK ({key} IN ({', '.join(conditions)}))"
+            return f"TEXT {check_constraint}"
+        return "TEXT"
 
     def create_tables(self):
-        Base.metadata.create_all(self.engine)
+        """使用纯 SQLite 创建表"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        for table_name, columns in self.tables.items():
+            column_defs = []
+            for col_name, col_type in columns.items():
+                if col_name == "id":
+                    column_def = f"{col_name} {col_type}"
+                elif col_name.endswith("_id"):
+                    ref_table = col_name[:-3]
+                    column_def = f"{col_name} INTEGER REFERENCES {ref_table}(id)"
+                else:
+                    column_def = f"{col_name} {col_type}"
+                column_defs.append(column_def)
+            create_table_sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(column_defs)})"
+            cursor.execute(create_table_sql)
+
+        conn.commit()
+        conn.close()
 
     def flatten_dict(self, data):
         result = []
-        cur_stack = [(data, self.root_table_name, None)]
+        cur_stack = [(data, self.schema, self.root_table_name, None)]
         next_stack = []
         while cur_stack:
-            current, table_name, parent_index = cur_stack.pop()
-            self.tables_max_id[table_name] += 1
+            current, current_schema, table_name, parent_index = cur_stack.pop()
+            self.tables_max_id[table_name] = self.tables_max_id.get(table_name, 0) + 1
             flattened = {table_name: {}}
+            additional_props = {}
+
             if isinstance(current, dict):
+                defined_properties = current_schema.get("properties", {}).keys()
                 for key, value in current.items():
-                    if isinstance(value, dict) or isinstance(value, list):
-                        # 如果值是字典，则将该字典继续添加到队列中
-                        next_stack.append((value, table_name + '_' + key, self.tables_max_id[table_name]))
+                    if key in defined_properties:
+                        if isinstance(value, dict) or isinstance(value, list):
+                            sub_schema = current_schema["properties"][key]
+                            next_stack.append((value, sub_schema, f"{table_name}_{key}", self.tables_max_id[table_name]))
+                        else:
+                            if isinstance(value, bool):  # 检查是否为布尔值
+                                value = 'true' if value else 'false'  # 转换为字符串
+                            flattened[table_name][key] = value
                     else:
-                        # 如果值是基本类型，直接添加到当前扁平化字典
-                        flattened[table_name][key] = value
+                        additional_props[key] = value
+
+                if additional_props:
+                    flattened[table_name]["additionalProperties"] = json.dumps(additional_props)
+
                 if parent_index is not None:
                     flattened[table_name][self.parent_relation[table_name]] = parent_index
                 result.append(flattened)
+            # 处理数组类型（保持原有逻辑）
             elif isinstance(current, list):
                 temp = {}
                 same_type_flag = 1
                 void_flag = 0
-                data_type = type(current[0])
+                data_type = type(current[0]) if current else None
                 for item in current:
                     if type(item) is not data_type:
                         same_type_flag = 0
                         break
                 for item in current:
                     if isinstance(item, dict) or isinstance(item, list):
-                        # 如果值是字典，则将该字典继续添加到队列中
-                        next_stack.append((item, table_name + "_item", self.tables_max_id[table_name]))
+                        sub_schema = current_schema.get("items", {})
+                        next_stack.append((item, sub_schema, f"{table_name}_item", self.tables_max_id[table_name]))
                         if void_flag == 0:
+                            if parent_index is not None:
+                                temp[self.parent_relation[table_name]] = parent_index
+                            flattened[table_name] = temp
                             result.append(flattened)
                             void_flag = 1
                     else:
                         if same_type_flag == 0:
                             index = 0
                             for inner_item in current:
-                                temp[table_name + "_item_" + str(index)] = inner_item
+                                if isinstance(inner_item, bool):  # 检查是否为布尔值
+                                    inner_item = 'true' if inner_item else 'false'  # 转换为字符串
+                                temp[f"{table_name}_item_{index}"] = inner_item
                                 index += 1
                             if parent_index is not None:
                                 temp[self.parent_relation[table_name]] = parent_index
@@ -295,59 +247,62 @@ class JSONSchemaToSqlite3():
                             result.append(flattened)
                         else:
                             for inner_item in current:
-                                flattened = {table_name: {table_name + "_item": inner_item}}
+                                if isinstance(inner_item, bool):  # 检查是否为布尔值
+                                    inner_item = 'true' if inner_item else 'false'  # 转换为字符串
+                                flattened = {table_name: {f"{table_name}_item": inner_item}}
                                 if parent_index is not None:
                                     flattened[table_name][self.parent_relation[table_name]] = parent_index
                                 result.append(flattened)
                         break
             if not cur_stack and next_stack:
-                temp_stack = []
-                while next_stack:
-                    temp_stack.append(next_stack.pop())
-                while temp_stack:
-                    cur_stack.append(temp_stack.pop())
-        print(result)
+                cur_stack, next_stack = next_stack, []
         return result
 
     def preprocessing_data(self, data):
         result = self.flatten_dict(data["body"])
         del data["body"]
-        orm_instances = []
         for key in data:
             result[0][self.root_table_name][key] = data[key]
-        for item in result:
-            for key, value in item.items():
-                parent_id = None
-                parent_table = None
-                if "parent_index" in value:
-                    parent_table = next(iter(result[value["parent_index"]]))
-                    parent_id = self.tables_max_id[parent_table]
-                    del value["parent_index"]
-                orm_instance = self.orms[key](**value)
-                if parent_id:
-                    setattr(orm_instance, f"{parent_table}_id", parent_id)
-                orm_instances.append(orm_instance)
-                self.tables_max_id[key] += 1
-        return orm_instances
+        return result
 
-    def insert_to_db(self, data, session):
-        if (Draft7Validator(self.schema).is_valid(data.get("body"))):
-            session.add_all(self.preprocessing_data(data))
-            session.commit()
-        else:
-            print("valiate failed")
+    def insert_to_db(self, data):
+        if not Draft7Validator(self.schema).is_valid(data.get("body")):
+            print("验证失败")
+            return
 
-    def get_tables_max_id(self, session):
-        for table_name, _ in self.orms.items():
-            result = session.execute(f"SELECT MAX(id) FROM {table_name}").scalar()
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        self.get_tables_max_id()
+        records = self.preprocessing_data(data)
+        print(records)
+        for item in records:
+            for table_name, record in item.items():
+                columns = ", ".join(record.keys())
+                placeholders = ", ".join("?" * len(record))
+                insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                print(insert_sql)
+                cursor.execute(insert_sql, list(record.values()))
+
+        conn.commit()
+        conn.close()
+
+    def get_tables_max_id(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        for table_name in self.tables.keys():
+            cursor.execute(f"SELECT MAX(id) FROM {table_name}")
+            result = cursor.fetchone()[0]
             self.tables_max_id[table_name] = result if result is not None else 0
 
-    def insert_all_to_db(self, data, session, protocol):
-        if type(data) is not list:
-            return "data need to be list"
-        else:
-            for i in range(0, len(data)):
-                if protocol == "redis":
-                    self.insert_to_db({"body": data[i]}, session)
-                else:
-                    self.insert_to_db(data[i], session)
+        conn.close()
+
+    def insert_all_to_db(self, data, protocol):
+        if not isinstance(data, list):
+            return "数据需要是列表类型"
+        
+        for i in range(len(data)):
+            if protocol == "redis":
+                self.insert_to_db({"body": data[i]})
+            else:
+                self.insert_to_db(data[i])

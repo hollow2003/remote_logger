@@ -17,18 +17,15 @@ schema2db = {}
 
 
 @app.route('/launch_remote_sidecar', methods=['POST'])
-def launchRemoteSidecar():
+def launch_remote_sidecar():
     data = json.loads(request.data)
-    if "service_config" not in data or\
-            "control_port" not in data or\
-            "ntp_address" not in data or\
-            "redis_address" not in data or\
-            "redis_port" not in data or\
-            "target_redis_address" not in data or\
-            "target_redis_port" not in data or\
-            "remote_sidecar_launcher_ip" not in data or\
-            "local_config_path" not in data:
-        return "Missing Required Parameter"
+    required_parameters = [
+        "service_config", "control_port", "ntp_address", "redis_address", "redis_port",
+        "target_redis_address", "target_redis_port", "remote_sidecar_launcher_ip", "local_config_path"
+    ]
+    missing_parameters = [param for param in required_parameters if param not in data]
+    if missing_parameters:
+        return "Missing Required Parameter: " + ", ".join(missing_parameters)
     else:
         load_config_file(data.get("local_config_path"))
         remoteSidecarLauncher = RemoteSidecarLauncher(
@@ -39,7 +36,8 @@ def launchRemoteSidecar():
             data.get("redis_port"),
             data.get("target_redis_address"),
             data.get("target_redis_port"),
-            data.get("remote_sidecar_launcher_ip"))
+            data.get("remote_sidecar_launcher_ip")
+        )
         threading.Thread(target=remoteSidecarLauncher.launch_remote_sidecar, args=()).start()
         return "success"
 
