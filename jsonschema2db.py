@@ -327,7 +327,6 @@ class JSONSchemaToSqlite3():
                 if parent_id:
                     setattr(orm_instance, f"{parent_table}_id", parent_id)
                 orm_instances.append(orm_instance)
-                self.tables_max_id[key] += 1
         return orm_instances
 
     def insert_to_db(self, data, session):
