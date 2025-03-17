@@ -3,14 +3,11 @@ import json
 import time
 from redis_client import RedisClient
 from jsonschema2db import JSONSchemaToSqlite3
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from flask import Flask, request
 from remote_sidecar_launcher import RemoteSidecarLauncher
 
-engine = create_engine('sqlite:///server.db', echo=False)
-Session = sessionmaker(bind=engine)
-session = Session()
+dbpath = 'server.db'
+
 app = Flask(__name__)
 redisClient = RedisClient()
 schema2db = {}
@@ -50,7 +47,7 @@ def data_synchronize():
         return "Missing required para!"
     else:
         result = redisClient.get_list(data["hostname"], data["list_key"])
-        schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, session, data["protocol"])
+        schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, data["protocol"])
         return "Syn Data Success"
 
 
@@ -79,14 +76,15 @@ def load_config_file(config_file_path):
             if item.get("protocol") == "unix":
                 root_table_name = item.get("name") + "_" + item.get("protocol")
                 dict_key = item.get("name") + "." + item.get("protocol") + "." + item.get("path")
-                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToSqlite3(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="unix")
+                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToSqlite3(load_dict["name"], item.get("schema"), dbpath, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="unix")
             elif item.get("protocol") == "http":
                 dict_key = item.get("name") + "." + item.get("protocol") + "." + item.get("path") + "." + item.get("method")
                 root_table_name = item.get("name") + "_" + item.get("protocol") + "_" + item.get("method")
-                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToSqlite3(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="http")
+                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToSqlite3(load_dict["name"], item.get("schema"), dbpath, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="http")
             elif item.get("protocol") == "redis":
                 root_table_name = item.get("key")
-                schema2db[load_dict.get("name")][root_table_name] = JSONSchemaToSqlite3(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="redis")
+                schema2db[load_dict.get("name")][root_table_name] = JSONSchemaToSqlite3(load_dict["name"], item.get("schema"), dbpath, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="redis")
+        print(schema2db)
 
 
 if __name__ == '__main__':

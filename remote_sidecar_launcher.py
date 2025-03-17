@@ -26,8 +26,8 @@ class RemoteSidecarLauncher():
             "target_redis_port": self.target_redis_port
             }
         try:
-            response = requests.post(self.remote_sidecar_launcher_ip, json.dumps(data))
-            print(response.json())
+            headers = {"Content-Type": "application/json"}
+            response = requests.post(self.remote_sidecar_launcher_ip, json=data, headers=headers)
         except Exception as e:
             print('Failed to launch remote sidecar: %s' % (e))
         pass

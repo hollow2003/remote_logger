@@ -5,6 +5,8 @@ import sqlite3
 from collections import deque
 import enum
 import json
+import time
+
 
 class JSONSchemaToSqlite3():
     def __init__(self, hostname, schema, db_path, root_table_name=None, api_type=None):
@@ -26,7 +28,6 @@ class JSONSchemaToSqlite3():
         try:
             # 验证 schema 是否符合标准
             Draft7Validator.check_schema(self.schema)
-            print("Schema 是有效的标准 Schema")
         except SchemaError as e:
             print(f"Schema 无效: {e.message}")
 
@@ -272,17 +273,21 @@ class JSONSchemaToSqlite3():
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        self.get_tables_max_id()
+        start_time = time.time()
         records = self.preprocessing_data(data)
-        print(records)
         for item in records:
             for table_name, record in item.items():
-                columns = ", ".join(record.keys())
-                placeholders = ", ".join("?" * len(record))
-                insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-                print(insert_sql)
-                cursor.execute(insert_sql, list(record.values()))
-
+                if record:
+                    columns = ", ".join(record.keys())
+                    placeholders = ", ".join("?" * len(record))
+                    insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                    cursor.execute(insert_sql, list(record.values()))
+                else:
+                    columns = "id"
+                    placeholders = "?"
+                    insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                    cursor.execute(insert_sql, [None])  # 使用 None 让 SQLite 自动填充 id
+                    
         conn.commit()
         conn.close()
 
@@ -300,9 +305,28 @@ class JSONSchemaToSqlite3():
     def insert_all_to_db(self, data, protocol):
         if not isinstance(data, list):
             return "数据需要是列表类型"
-        
+        global total_preprocess_time
+        records = []
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('PRAGMA foreign_keys = ON')
         for i in range(len(data)):
             if protocol == "redis":
-                self.insert_to_db({"body": data[i]})
+                records += self.preprocessing_data({"body": data[i]})
             else:
-                self.insert_to_db(data[i])
+                records += self.preprocessing_data(data[i])
+        for item in records:
+            for table_name, record in item.items():
+                if record:
+                    columns = ", ".join(record.keys())
+                    placeholders = ", ".join("?" * len(record))
+                    insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                    cursor.execute(insert_sql, list(record.values()))
+                else:
+                    columns = "id"
+                    placeholders = "?"
+                    insert_sql = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                    cursor.execute(insert_sql, [None])  # 使用 None 让 SQLite 自动填充 id
+                    
+        conn.commit()
+        conn.close()

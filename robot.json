@@ -22,8 +22,31 @@
             "type": "object",
             "properties": {
                   "loginfo": {
-                     "$ref": "loginfo.json"
-                  },
+		        "type": "object",
+		        "properties":{
+		              "functionName": {
+		                    "type": "string",
+		                    "description": "需要记录日志的函数名",
+		                    "examples": ["checkSystemStatus"]
+		                },
+		               "checkpointName": {
+		                  "type": "string",
+		             "description": "检查点名称",
+		             "examples": ["初始化"]
+		          },
+		          "logLevel": {
+		             "type": "string",
+		             "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+		             "description": "日志级别",
+		             "default": "INFO"
+		          }
+		    },
+		    "additionalProperties": false,
+		    "required": [
+		           "functionName",
+		           "checkpointName"
+		     ]
+		},
                   "Position": {
                      "type": "object",
                      "properties": {
@@ -67,8 +90,31 @@
             "type": "object",
             "properties": {
                   "loginfo": {
-                     "$ref": "loginfo.json"
+            "type": "object",
+            "properties":{
+                "functionName": {
+                     "type": "string",
+                     "description": "需要记录日志的函数名",
+                     "examples": ["checkSystemStatus"]
                   },
+                  "checkpointName": {
+                     "type": "string",
+                     "description": "检查点名称",
+                     "examples": ["初始化"]
+                  },
+                  "logLevel": {
+                     "type": "string",
+                     "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                     "description": "日志级别",
+                     "default": "INFO"
+                  }
+            },
+            "additionalProperties": false,
+            "required": [
+                   "functionName",
+                   "checkpointName"
+             ]
+        },
                   "Position": {
                      "type": "object",
                      "properties": {
