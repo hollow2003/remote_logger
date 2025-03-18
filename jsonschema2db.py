@@ -23,7 +23,7 @@ class JSONSchemaToSqlite3():
         self.db_path = db_path
         self.tables = self.generate_table_definitions()
         self.create_tables()
-
+        self.get_tables_max_id()
     def validate_schema(self):
         try:
             # 验证 schema 是否符合标准
