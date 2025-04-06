@@ -23,7 +23,7 @@ class JSONSchemaToSqlite3():
         self.db_path = db_path
         self.tables = self.generate_table_definitions()
         self.create_tables()
-        self.get_tables_max_id()
+
     def validate_schema(self):
         try:
             # 验证 schema 是否符合标准
@@ -61,6 +61,7 @@ class JSONSchemaToSqlite3():
             parent_table, tables, node_queue
     ):
         """处理对象类型 schema"""
+        required_fields = current_schema.get("required", [])
         for key, value in current_schema.get("properties", {}).items():
             if value.get("type") in ["object", "array"]:
                 sub_table_name = f"{table_name}_{key}"
@@ -71,6 +72,8 @@ class JSONSchemaToSqlite3():
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(value.get("type"))
+                if key in required_fields:
+                    column_type += " NOT NULL"
                 columns[key] = column_type
         additional_properties = current_schema.get("additionalProperties", False)
         if additional_properties:
@@ -136,7 +139,7 @@ class JSONSchemaToSqlite3():
             "integer": "INTEGER",
             "boolean": "TEXT",  # 可用 Integer 或 Boolean
             "float": "REAL",
-            "number": "INTEGER"
+            "number": "REAL"
         }
         return type_mapping.get(schema_item, "TEXT")  # 默认使用 String 类型
 
