@@ -12,7 +12,7 @@
       {
          "name": "unix",
          "protocol": "unix",
-         "path": "/home/hpr/consul/services/robot",
+         "path": "/home/hpr/mock_robot/robot",
          "flushInterval": 1,
          "bufferSize": 4096,
          "maxMsgNum": 10,
