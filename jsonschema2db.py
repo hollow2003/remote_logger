@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, Integer, String, Boolean, Enum, ForeignKey
+from sqlalchemy import Column, Float, Integer, String, Boolean, ForeignKey, CheckConstraint, JSON, Index
 from sqlalchemy.orm import declarative_base, sessionmaker
 from jsonschema import Draft7Validator
 from collections import deque
@@ -27,7 +27,7 @@ class JSONSchemaToSqlite3():
         self.create_tables()
         Session = sessionmaker(bind=engine)
         with Session() as session:
-            self.get_tables_max_id(session)
+            self.get_tables_max_id()
 
     def validate_schema(self):
         try:
@@ -89,22 +89,34 @@ class JSONSchemaToSqlite3():
                 sub_nodes.append((value, sub_table_name))
             else:
                 if "enum" in value:
-                    column_type = self.handle_enum(key, value)
+                    column_type, constraints = self.handle_enum(key, value)
+                    columns[key] = Column(
+                        key,
+                        column_type,
+                        *constraints,
+                        nullable=("required" not in current_schema or key not in current_schema.get("required"))
+                    )
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(value.get("type"))
-                columns[key] = Column(
-                    key,
-                    column_type,
-                    nullable=("required" not in current_schema or key not in current_schema.get("required"))
-                )
+                    columns[key] = Column(
+                        key,
+                        column_type,
+                        nullable=("required" not in current_schema or key not in current_schema.get("required"))
+                    )
+        # 检查 additionalProperties 是否为 true，添加 JSON 列
+        if current_schema.get("additionalProperties", False) is True:
+            columns["additionalProperties"] = Column("additionalProperties", JSON, nullable=True)
+
+        table_index = current_schema.get("x-index", False)
 
         self.create_and_add_orm_class(
             columns, sub_nodes,
             table_name,
             parent_table,
             orm_classes,
-            node_queue
+            node_queue,
+            table_index=table_index
         )
 
     def process_array_type(
@@ -116,36 +128,50 @@ class JSONSchemaToSqlite3():
         if isinstance(items_schema, list):
             index = 0
             for item in items_schema:
+                column_name = f"{table_name}_item_{index}"
                 if "enum" in item:
-                    column_type = self.handle_enum(
+                    column_type, constraints = self.handle_enum(
                         f"{table_name}_item_{index}", item
+                    )
+                    columns[column_name] = Column(
+                        column_name,
+                        column_type,
+                        *constraints,
+                        nullable=False
                     )
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(item.get("type"))
-                columns[f"{table_name}_item_{index}"] = Column(
-                    f"{table_name}_item_{index}",
-                    column_type,
-                    nullable=False
-                )
+                    columns[column_name] = Column(
+                        column_name,
+                        column_type,
+                        nullable=False
+                    )
                 index += 1
         elif isinstance(items_schema, dict):
             if items_schema.get("type") in ["object", "array"]:
                 sub_table_name = f"{table_name}_item"
                 sub_nodes.append((items_schema, sub_table_name))
             else:
+                column_name = f"{table_name}_item"
                 if "enum" in items_schema:
-                    column_type = self.handle_enum(
+                    column_type, constraints = self.handle_enum(
                         f"{table_name}_item", items_schema
+                    )
+                    columns[column_name] = Column(
+                        column_name,
+                        column_type,
+                        *constraints,
+                        nullable=False
                     )
                 else:
                     # 不是 enum 类型时，使用基本类型
                     column_type = self.get_basic_type(items_schema.get("type"))
-                columns[f"{table_name}_item"] = Column(
-                    f"{table_name}_item",
-                    column_type,
-                    nullable=False
-                )
+                    columns[column_name] = Column(
+                        column_name,
+                        column_type,
+                        nullable=False
+                    )
 
         self.create_and_add_orm_class(
             columns,
@@ -158,7 +184,8 @@ class JSONSchemaToSqlite3():
 
     def create_and_add_orm_class(
             self, columns, sub_nodes, table_name,
-            parent_table, orm_classes, node_queue
+            parent_table, orm_classes, node_queue,
+            table_index=False
     ):
         columns["id"] = Column("id", Integer, primary_key=True)
         if table_name == self.root_table_name:
@@ -175,16 +202,9 @@ class JSONSchemaToSqlite3():
                 f"{parent_table}.id"
             ))
             self.parent_relation[table_name] = f"{parent_table}_id"
-            orm_classes[
-                table_name
-            ] = self.create_orm_class(
-                table_name, columns
-            )
-        else:
-            orm_classes[table_name] = self.create_orm_class(
-                table_name,
-                columns
-            )
+        orm_classes[table_name] = self.create_orm_class(
+            table_name, columns, table_index
+        )
 
         # 加入子节点
         for sub_node, sub_table_name in sub_nodes:
@@ -206,34 +226,26 @@ class JSONSchemaToSqlite3():
         return type_mapping.get(schema_item, String)  # 默认使用 String 类型
 
     def handle_enum(self, key, value):
-        """
-        Handles enum types.
-        """
         enum_values = value.get("enum", [])
         enum_type = value.get("type", "string")  
-        # Default to string type for enum
 
         if enum_type == "string":
-            EnumType = enum.Enum(
-                f"{key.capitalize()}_Enum", enum_values, type=str
-            )
-        elif enum_type == "integer":
-            # If enum is of integer type
-            enum_values = [int(v) for v in enum_values]
-            EnumType = enum.Enum(
-                f"{key.capitalize()}_Enum", enum_values, type=int
-            )
-        elif enum_type == "number":
-            # If enum is of number type
-            enum_values = [float(v) for v in enum_values]
-            EnumType = enum.Enum(
-                f"{key.capitalize()}_Enum", enum_values, type=float
-            )
+            column_type = String
+        elif enum_type in ["integer", "number"]:
+            column_type = Integer if enum_type == "integer" else Float
+            enum_values = [str(v) for v in enum_values]  # Ensure values are stringified for CHECK constraint
+        else:
+            column_type = String  # Fallback to String for unsupported types
 
-        # Return SQLAlchemy Enum type
-        return Enum(EnumType)
+        # Generate comma-separated string for CHECK constraint
+        quoted_values = [f"'{v}'" for v in enum_values]
+        values_str = ','.join(quoted_values)
+        # Generate CHECK constraint using simplified f-string
+        check_constraint = CheckConstraint(f"{key} IN ({values_str})")
+        
+        return column_type, [check_constraint]
 
-    def create_orm_class(self, table_name, columns):
+    def create_orm_class(self, table_name, columns, table_index):
         """根据字段创建 ORM 类"""
         print(table_name)
         print(columns)
@@ -243,35 +255,66 @@ class JSONSchemaToSqlite3():
         }
         for column_name, column in columns.items():
             attrs[column_name] = column
+        indexes = []
+        if isinstance(table_index, list) and table_index:
+            # 验证 x-index 中的字段是否存在
+            invalid_fields = [field for field in table_index if field not in columns]
+            if invalid_fields:
+                raise ValueError(f"Invalid index fields for table {table_name}: {invalid_fields}")
+            if len(table_index) == 1:
+                # 单字段索引：idx_table_name_key
+                field = table_index[0]
+                indexes.append(Index(f'idx_{table_name}_{field}', field))
+            else:
+                # 多字段索引：idx_table_name_composite
+                indexes.append(Index(f'idx_{table_name}_composite', *table_index))
+
+        # 设置 __table_args__
+        if indexes:
+            attrs['__table_args__'] = tuple(indexes)
         return type(table_name, (Base,), attrs)
 
     def create_tables(self):
         Base.metadata.create_all(self.engine)
 
-    def flatten_dict(self, data):
+    def flatten_dict(self, data, schema=None):
         result = []
-        cur_stack = [(data, self.root_table_name, None)]
+        cur_stack = [(data, self.root_table_name, None, self.schema)]
         next_stack = []
         while cur_stack:
-            current, table_name, parent_index = cur_stack.pop()
+            current, table_name, parent_index, current_schema = cur_stack.pop()
             self.tables_max_id[table_name] += 1
             flattened = {table_name: {}}
+            additional_props = {}
             if isinstance(current, dict):
+                defined_properties = current_schema.get("properties", {}).keys()
+                allow_additional = current_schema.get("additionalProperties", False) is True
                 for key, value in current.items():
-                    if isinstance(value, dict) or isinstance(value, list):
-                        # 如果值是字典，则将该字典继续添加到队列中
-                        next_stack.append((value, table_name + '_' + key, self.tables_max_id[table_name]))
-                    else:
-                        # 如果值是基本类型，直接添加到当前扁平化字典
-                        flattened[table_name][key] = value
+                    if key in defined_properties:
+                        if isinstance(value, dict) or isinstance(value, list):
+                            # 如果值是字典，则将该字典继续添加到队列中
+                            sub_schema = current_schema.get("properties", {}).get(key, {})
+                            next_stack.append((value, table_name + '_' + key, self.tables_max_id[table_name], sub_schema))
+                        else:
+                            # 如果值是基本类型，直接添加到当前扁平化字典
+                            flattened[table_name][key] = value
+                    elif allow_additional:
+                        additional_props[key] = value
+                if parent_index is not None:
+                    flattened[table_name][self.parent_relation[table_name]] = parent_index
+                if allow_additional and additional_props:
+                    flattened[table_name]["additionalProperties"] = additional_props
+
                 if parent_index is not None:
                     flattened[table_name][self.parent_relation[table_name]] = parent_index
                 result.append(flattened)
+
             elif isinstance(current, list):
                 temp = {}
                 same_type_flag = 1
                 void_flag = 0
                 data_type = type(current[0])
+                items_schema = current_schema.get("items", {})
                 for item in current:
                     if type(item) is not data_type:
                         same_type_flag = 0
@@ -279,7 +322,7 @@ class JSONSchemaToSqlite3():
                 for item in current:
                     if isinstance(item, dict) or isinstance(item, list):
                         # 如果值是字典，则将该字典继续添加到队列中
-                        next_stack.append((item, table_name + "_item", self.tables_max_id[table_name]))
+                        next_stack.append((item, table_name + "_item", self.tables_max_id[table_name], items_schema))
                         if void_flag == 0:
                             result.append(flattened)
                             void_flag = 1
@@ -329,24 +372,31 @@ class JSONSchemaToSqlite3():
                 orm_instances.append(orm_instance)
         return orm_instances
 
-    def insert_to_db(self, data, session):
+    def insert_to_db(self, data):
         if (Draft7Validator(self.schema).is_valid(data.get("body"))):
-            session.add_all(self.preprocessing_data(data))
-            session.commit()
+            Session = sessionmaker(bind=self.engine)
+            with Session() as session:
+                try:
+                    session.add_all(self.preprocessing_data(data))
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    print(f"Insert failed: {e}")
         else:
             print("valiate failed")
 
-    def get_tables_max_id(self, session):
-        for table_name, _ in self.orms.items():
-            result = session.execute(f"SELECT MAX(id) FROM {table_name}").scalar()
-            self.tables_max_id[table_name] = result if result is not None else 0
+    def get_tables_max_id(self):
+        with self.engine.connect() as connection:
+            for table_name, _ in self.orms.items():
+                result = connection.execute(f"SELECT MAX(id) FROM {table_name}").scalar()
+                self.tables_max_id[table_name] = result if result is not None else 0
 
-    def insert_all_to_db(self, data, session, protocol):
+    def insert_all_to_db(self, data, protocol):
         if type(data) is not list:
             return "data need to be list"
         else:
             for i in range(0, len(data)):
                 if protocol == "redis":
-                    self.insert_to_db({"body": data[i]}, session)
+                    self.insert_to_db({"body": data[i]})
                 else:
-                    self.insert_to_db(data[i], session)
+                    self.insert_to_db(data[i])

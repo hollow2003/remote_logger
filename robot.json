@@ -28,13 +28,13 @@
                      "type": "object",
                      "properties": {
                            "x": {
-                              "type": "number"
+                              "type": "string"
                            },
                            "y": {
-                              "type": "number"
+                              "type": "boolean"
                            },
                            "raw": {
-                              "type": "number"
+                              "type": "float"
                            }
                      },
                      "additionalProperties": false,
@@ -45,7 +45,7 @@
                      ]
                   }
             },
-            "additionalProperties": false,
+            "additionalProperties": true,
             "required": [
                   "loginfo",
                   "Position"
@@ -73,7 +73,8 @@
                      "type": "object",
                      "properties": {
                            "x": {
-                              "type": "number"
+                              "type": "string",
+                              "enum": ["x", "y", "z"]
                            },
                            "y": {
                               "type": "number"
