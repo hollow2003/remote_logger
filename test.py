@@ -195,7 +195,7 @@ if __name__ == "__main__":
                             "name": {
                                 "type": "string", "enum": ["name1", "name2"]
                             }
-                        },
+                        }
                     }
                 }, 
                 "list3": {
@@ -236,6 +236,6 @@ if __name__ == "__main__":
             }
         }
     }
-    js = JSONSchemaToSqlite3("test", simple_schema, engine)
+    js = JSONSchemaToSqlite3("root_table", simple_schema, engine)
     js.create_tables()
-    js.insert_to_db(simple_data)
+    js.insert_all_to_db(simple_data, "http")

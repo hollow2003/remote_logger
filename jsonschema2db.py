@@ -221,7 +221,7 @@ class JSONSchemaToSqlite3():
             "integer": Integer,
             "boolean": Boolean,  # 可用 Integer 或 Boolean
             "float": Float,
-            "number": Integer
+            "number": Float
         }
         return type_mapping.get(schema_item, String)  # 默认使用 String 类型
 
@@ -392,11 +392,20 @@ class JSONSchemaToSqlite3():
                 self.tables_max_id[table_name] = result if result is not None else 0
 
     def insert_all_to_db(self, data, protocol):
-        if type(data) is not list:
+        if not isinstance(data, list):
             return "data need to be list"
-        else:
-            for i in range(0, len(data)):
-                if protocol == "redis":
-                    self.insert_to_db({"body": data[i]})
-                else:
-                    self.insert_to_db(data[i])
+        batch_size = 100  # 每批插入 100 条
+        Session = sessionmaker(bind=self.engine)
+        with Session() as session:
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
+                orm_instances = []
+                for item in batch:
+                    processed = {"body": item} if protocol == "redis" else item
+                    orm_instances.extend(self.preprocessing_data(processed))
+                try:
+                    session.add_all(orm_instances)
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    print(f"Batch insert failed: {e}")
