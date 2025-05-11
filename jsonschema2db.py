@@ -5,6 +5,26 @@ from collections import deque
 from jsonschema.exceptions import SchemaError
 import enum
 
+#for test
+import cProfile
+import io
+import pstats
+import contextlib
+
+#for test
+@contextlib.contextmanager
+def profiled():
+    pr = cProfile.Profile()
+    pr.enable()
+    yield
+    pr.disable()
+    s = io.StringIO()
+    ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
+    ps.print_stats()
+    # uncomment this to see who's calling what
+    # ps.print_callers()
+    print(s.getvalue())
+ 
 
 Base = declarative_base()
 
@@ -25,8 +45,8 @@ class JSONSchemaToSqlite3():
         self.engine = engine
         self.orms = self.generate_basic_orm()
         self.create_tables()
-        Session = sessionmaker(bind=engine)
-        with Session() as session:
+        self.Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+        with self.Session() as session:
             self.get_tables_max_id()
 
     def validate_schema(self):
@@ -202,6 +222,10 @@ class JSONSchemaToSqlite3():
                 f"{parent_table}.id"
             ))
             self.parent_relation[table_name] = f"{parent_table}_id"
+            if isinstance(table_index, list) and table_index:
+            	table_index.append([f"{parent_table}_id"])
+            else:
+            	table_index = [[f"{parent_table}_id"]]
         orm_classes[table_name] = self.create_orm_class(
             table_name, columns, table_index
         )
@@ -247,8 +271,8 @@ class JSONSchemaToSqlite3():
 
     def create_orm_class(self, table_name, columns, table_index):
         """根据字段创建 ORM 类"""
-        print(table_name)
-        print(columns)
+        #print(table_name)
+        #print(columns)
         attrs = {
             '__tablename__': table_name,
             '__classname__': table_name
@@ -257,25 +281,34 @@ class JSONSchemaToSqlite3():
             attrs[column_name] = column
         indexes = []
         if isinstance(table_index, list) and table_index:
-            # 验证 x-index 中的字段是否存在
-            invalid_fields = [field for field in table_index if field not in columns]
-            if invalid_fields:
-                raise ValueError(f"Invalid index fields for table {table_name}: {invalid_fields}")
-            if len(table_index) == 1:
-                # 单字段索引：idx_table_name_key
-                field = table_index[0]
-                indexes.append(Index(f'idx_{table_name}_{field}', field))
-            else:
-                # 多字段索引：idx_table_name_composite
-                indexes.append(Index(f'idx_{table_name}_composite', *table_index))
+        # Validate that table_index is a list of lists
+            if not all(isinstance(index, list) for index in table_index):
+                raise ValueError(f"Invalid x-index format for table {table_name}: Expected list of lists, got {table_index}")
 
-        # 设置 __table_args__
+        # Validate fields in each index and create indexes
+            for index_fields in table_index:
+            # Check if all fields in the index exist in columns
+                invalid_fields = [field for field in index_fields if field not in columns]
+                if invalid_fields:
+                    raise ValueError(f"Invalid index fields for table {table_name}: {invalid_fields}")
+
+                if len(index_fields) == 1:
+                    # Single-field index
+                    field = index_fields[0]
+                    indexes.append(Index(f'idx_{table_name}_{field}', field))
+                else:
+                    # Composite index
+                    indexes.append(Index(f'idx_{table_name}_composite_{"_".join(index_fields)}', *index_fields))
+
+        # Set __table_args__ if there are indexes
         if indexes:
             attrs['__table_args__'] = tuple(indexes)
         return type(table_name, (Base,), attrs)
 
     def create_tables(self):
-        Base.metadata.create_all(self.engine)
+        with self.engine.connect() as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
+            Base.metadata.create_all(self.engine)
 
     def flatten_dict(self, data, schema=None):
         result = []
@@ -349,7 +382,7 @@ class JSONSchemaToSqlite3():
                     temp_stack.append(next_stack.pop())
                 while temp_stack:
                     cur_stack.append(temp_stack.pop())
-        print(result)
+        #print(result)
         return result
 
     def preprocessing_data(self, data):
@@ -374,19 +407,22 @@ class JSONSchemaToSqlite3():
 
     def insert_to_db(self, data):
         if (Draft7Validator(self.schema).is_valid(data.get("body"))):
-            Session = sessionmaker(bind=self.engine)
-            with Session() as session:
-                try:
-                    session.add_all(self.preprocessing_data(data))
-                    session.commit()
-                except Exception as e:
-                    session.rollback()
-                    print(f"Insert failed: {e}")
+            #Session = sessionmaker(bind=self.engine, future=future, autoflush=False, expire_on_commit=False)
+            with self.Session() as session:
+                with self.engine.connect() as connection:
+                    connection.execute("PRAGMA foreign_keys=ON")
+                    try:
+                        session.add_all(self.preprocessing_data(data))
+                        session.commit()
+                    except Exception as e:
+                        session.rollback()
+                        print(f"Insert failed: {e}")
         else:
             print("valiate failed")
 
     def get_tables_max_id(self):
         with self.engine.connect() as connection:
+            connection.execute("PRAGMA foreign_keys=ON")
             for table_name, _ in self.orms.items():
                 result = connection.execute(f"SELECT MAX(id) FROM {table_name}").scalar()
                 self.tables_max_id[table_name] = result if result is not None else 0
@@ -394,18 +430,20 @@ class JSONSchemaToSqlite3():
     def insert_all_to_db(self, data, protocol):
         if not isinstance(data, list):
             return "data need to be list"
-        batch_size = 100  # 每批插入 100 条
-        Session = sessionmaker(bind=self.engine)
-        with Session() as session:
-            for i in range(0, len(data), batch_size):
-                batch = data[i:i + batch_size]
-                orm_instances = []
-                for item in batch:
-                    processed = {"body": item} if protocol == "redis" else item
-                    orm_instances.extend(self.preprocessing_data(processed))
-                try:
-                    session.add_all(orm_instances)
-                    session.commit()
-                except Exception as e:
-                    session.rollback()
-                    print(f"Batch insert failed: {e}")
+        batch_size = 500  # 每批插入 500 条
+        #Session = sessionmaker(bind=self.engine, future=future, autoflush=False, expire_on_commit=False)
+        with self.Session() as session:
+            with self.engine.connect() as connection:
+                connection.execute("PRAGMA foreign_keys=ON")
+                for i in range(0, len(data), batch_size):
+                    batch = data[i:i + batch_size]
+                    orm_instances = []
+                    for item in batch:
+                        processed = {"body": item} if protocol == "redis" else item
+                        orm_instances.extend(self.preprocessing_data(processed))
+                    try:
+                        session.add_all(orm_instances)
+                        session.commit()
+                    except Exception as e:
+                        session.rollback()
+                        print(f"Batch insert failed: {e}")
