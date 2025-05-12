@@ -40,13 +40,14 @@
 		             "description": "日志级别",
 		             "default": "INFO"
 		          }
-		    },
-		    "additionalProperties": false,
-		    "required": [
+		        },
+		        "additionalProperties": false,
+		        "x-index": [["logLevel"]],
+		        "required": [
 		           "functionName",
 		           "checkpointName"
-		     ]
-		},
+		        ]
+                  },
                   "Position": {
                      "type": "object",
                      "properties": {
@@ -110,6 +111,7 @@
                   }
             },
             "additionalProperties": false,
+            "x-index": [["logLevel"]],
             "required": [
                    "functionName",
                    "checkpointName"
