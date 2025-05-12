@@ -27,7 +27,7 @@ class RemoteSidecarLauncher():
             }
         try:
             response = requests.post(self.remote_sidecar_launcher_ip, json.dumps(data))
-            print(response.json())
+            print(response)
         except Exception as e:
             print('Failed to launch remote sidecar: %s' % (e))
         pass
