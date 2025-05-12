@@ -2,17 +2,17 @@
    "id": 123456,
    "kind": "Ability",
    "name": "moving_robot",
-   "process": "/usr/bin/python3.8 main.py",
+   "process": "python3 main.py",
    "port": 10800,
    "locate": {
-      "address": "192.168.114.128",
+      "address": "192.168.239.129",
       "MAC": "00:00:00:00:00:00"
    },
    "API": [
       {
          "name": "unix",
          "protocol": "unix",
-         "path": "/home/hpr/consul/services/robot",
+         "path": "/home/hpr/mock_robot/robot",
          "flushInterval": 1,
          "bufferSize": 4096,
          "maxMsgNum": 10,
@@ -22,19 +22,42 @@
             "type": "object",
             "properties": {
                   "loginfo": {
-                     "$ref": "loginfo.json"
-                  },
+		        "type": "object",
+		        "properties":{
+		              "functionName": {
+		                    "type": "string",
+		                    "description": "需要记录日志的函数名",
+		                    "examples": ["checkSystemStatus"]
+		                },
+		               "checkpointName": {
+		                  "type": "string",
+		             "description": "检查点名称",
+		             "examples": ["初始化"]
+		          },
+		          "logLevel": {
+		             "type": "string",
+		             "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+		             "description": "日志级别",
+		             "default": "INFO"
+		          }
+		    },
+		    "additionalProperties": false,
+		    "required": [
+		           "functionName",
+		           "checkpointName"
+		     ]
+		},
                   "Position": {
                      "type": "object",
                      "properties": {
                            "x": {
-                              "type": "string"
+                              "type": "number"
                            },
                            "y": {
-                              "type": "boolean"
+                              "type": "number"
                            },
                            "raw": {
-                              "type": "float"
+                              "type": "number"
                            }
                      },
                      "additionalProperties": false,
@@ -45,7 +68,7 @@
                      ]
                   }
             },
-            "additionalProperties": true,
+            "additionalProperties": false,
             "required": [
                   "loginfo",
                   "Position"
@@ -67,14 +90,36 @@
             "type": "object",
             "properties": {
                   "loginfo": {
-                     "$ref": "loginfo.json"
+            "type": "object",
+            "properties":{
+                "functionName": {
+                     "type": "string",
+                     "description": "需要记录日志的函数名",
+                     "examples": ["checkSystemStatus"]
                   },
+                  "checkpointName": {
+                     "type": "string",
+                     "description": "检查点名称",
+                     "examples": ["初始化"]
+                  },
+                  "logLevel": {
+                     "type": "string",
+                     "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                     "description": "日志级别",
+                     "default": "INFO"
+                  }
+            },
+            "additionalProperties": false,
+            "required": [
+                   "functionName",
+                   "checkpointName"
+             ]
+        },
                   "Position": {
                      "type": "object",
                      "properties": {
                            "x": {
-                              "type": "string",
-                              "enum": ["x", "y", "z"]
+                              "type": "number"
                            },
                            "y": {
                               "type": "number"

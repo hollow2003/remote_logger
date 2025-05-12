@@ -5,29 +5,7 @@ from collections import deque
 from jsonschema.exceptions import SchemaError
 import enum
 
-#for test
-import cProfile
-import io
-import pstats
-import contextlib
-
-#for test
-@contextlib.contextmanager
-def profiled():
-    pr = cProfile.Profile()
-    pr.enable()
-    yield
-    pr.disable()
-    s = io.StringIO()
-    ps = pstats.Stats(pr, stream=s).sort_stats("cumulative")
-    ps.print_stats()
-    # uncomment this to see who's calling what
-    # ps.print_callers()
-    print(s.getvalue())
- 
-
 Base = declarative_base()
-
 
 class JSONSchemaToSqlite3():
     def __init__(self, hostname, schema, engine, root_table_name=None, api_type=None):
@@ -382,7 +360,7 @@ class JSONSchemaToSqlite3():
                     temp_stack.append(next_stack.pop())
                 while temp_stack:
                     cur_stack.append(temp_stack.pop())
-        #print(result)
+        print(result)
         return result
 
     def preprocessing_data(self, data):

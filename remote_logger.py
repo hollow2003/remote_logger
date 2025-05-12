@@ -18,6 +18,7 @@ schema2db = {}
 
 @app.route('/launch_remote_sidecar', methods=['POST'])
 def launchRemoteSidecar():
+    
     data = json.loads(request.data)
     if "service_config" not in data or\
             "control_port" not in data or\
@@ -52,7 +53,7 @@ def data_synchronize():
         return "Missing required para!"
     else:
         result = redisClient.get_list(data["hostname"], data["list_key"])
-        schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, session, data["protocol"])
+        schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, data["protocol"])
         return "Syn Data Success"
 
 
