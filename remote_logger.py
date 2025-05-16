@@ -79,17 +79,20 @@ def load_config_file(config_file_path):
             return
         schema2db[load_dict.get("name")] = {}
         for item in load_dict["API"]:
+            schema_path = item.get("schema")
+            with open(schema_path, 'r', encoding='UTF-8') as schema_file:
+                schema_content = json.load(schema_file)
             if item.get("protocol") == "unix":
                 root_table_name = item.get("name") + "_" + item.get("protocol")
                 dict_key = item.get("name") + "." + item.get("protocol") + "." + item.get("path")
-                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="unix")
+                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], schema_content, engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="unix")
             elif item.get("protocol") == "http":
                 dict_key = item.get("name") + "." + item.get("protocol") + "." + item.get("path") + "." + item.get("method")
                 root_table_name = item.get("name") + "_" + item.get("protocol") + "_" + item.get("method")
-                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="http")
+                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], schema_content, engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="http")
             elif item.get("protocol") == "redis":
                 root_table_name = item.get("key")
-                schema2db[load_dict.get("name")][root_table_name] = JSONSchemaToORM(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="redis")
+                schema2db[load_dict.get("name")][root_table_name] = JSONSchemaToORM(load_dict["name"], schema_content, engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="redis")
 
 
 if __name__ == '__main__':
