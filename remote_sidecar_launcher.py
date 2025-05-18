@@ -26,8 +26,16 @@ class RemoteSidecarLauncher():
             "target_redis_port": self.target_redis_port
             }
         try:
-            response = requests.post(self.remote_sidecar_launcher_ip, json.dumps(data))
-            print(response)
+            response = requests.post(self.remote_sidecar_launcher_ip, json=data, timeout=5)
+            if response.status_code == 200:
+                return {"status": "success", "msg": "Remote sidecar launched successfully."}
+            else:
+                return {
+                    "status": "error",
+                    "msg": f"Remote sidecar launch failed, HTTP {response.status_code}: {response.text}"
+                }
         except Exception as e:
-            print('Failed to launch remote sidecar: %s' % (e))
-        pass
+            return {
+                "status": "error",
+                "msg": f"Failed to launch remote sidecar: {str(e)}"
+            }

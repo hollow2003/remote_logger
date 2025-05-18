@@ -1,0 +1,50 @@
+{
+   "id": 123456,
+   "kind": "Ability",
+   "name": "moving_robot1",
+   "process": "python3 main.py",
+   "port": 10800,
+   "locate": {
+      "address": "192.168.239.129",
+      "MAC": "00:00:00:00:00:00"
+   },
+   "API": [
+      {
+         "name": "unix",
+         "protocol": "unix",
+         "path": "/home/hpr/mock_robot1/robot",
+         "flushInterval": 1,
+         "bufferSize": 4096,
+         "maxMsgNum": 10,
+         "logLevel": "DEBUG",
+         "schema": "/home/hpr/schemas/unix_schema.json",
+         "message": "{functionName} 在 {checkpointName} 检查点时位于: x: {position.x}, y: {position.y} raw: {position.raw}"
+      },
+      {
+         "name": "redis",
+         "protocol": "redis",
+         "port": "6379",
+         "key": "moving_robot1",
+         "method": "LPOP",
+         "flushInterval": 1,
+         "bufferSize": 4096,
+         "maxMsgNum": 10,
+         "schema": "/home/hpr/schemas/redis_schema.json",
+         "message": "{functionName} 在 {checkpointName} 检查点时位于:  x: {position.x}, y: {position.y} raw: {position.raw}"
+      },
+      {
+         "name": "http",
+         "protocol": "http",
+         "method": "GET",
+         "port": "10800",
+         "path": "/robot1/heartbeat",
+         "interval": 1,
+         "timeout": 5,
+         "bufferSize": 1024,
+         "maxMsgNum": 10,
+         "logLevel": "INFO",
+         "schema": "/home/hpr/schemas/http_schema.json",
+         "message": "{functionName} 在 {checkpointName} 检查点: {status}"
+      }
+   ]
+}

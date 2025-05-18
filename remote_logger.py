@@ -1,11 +1,12 @@
 import threading
 import json
 import time
+import queue
 from redis_client import RedisClient
 from JSONSchema2ORM import JSONSchemaToORM
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from remote_sidecar_launcher import RemoteSidecarLauncher
 
 engine = create_engine('sqlite:///server.db', echo=False)
@@ -41,8 +42,21 @@ def launchRemoteSidecar():
             data.get("target_redis_address"),
             data.get("target_redis_port"),
             data.get("remote_sidecar_launcher_ip"))
-        threading.Thread(target=remoteSidecarLauncher.launch_remote_sidecar, args=()).start()
-        return "success"
+        result_queue = queue.Queue()
+
+        def run_and_return():
+            try:
+                result = remoteSidecarLauncher.launch_remote_sidecar()
+                result_queue.put({"status": "success", "result": result})
+            except Exception as e:
+                result_queue.put({"status": "error", "msg": str(e)})
+
+        thread = threading.Thread(target=run_and_return)
+        thread.start()
+        thread.join()  # 等待线程执行完毕
+
+        result = result_queue.get()
+        return jsonify(result)
 
 
 @app.route('/data_synchronize', methods=['POST'])
@@ -53,7 +67,14 @@ def data_synchronize():
         return "Missing required para!"
     else:
         result = redisClient.get_list(data["hostname"], data["list_key"])
-        schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, data["protocol"])
+        
+        def insert_task():
+            schema2db[data["hostname"]][data["list_key"]].insert_all_to_db(result, data["protocol"])
+        
+        import threading
+        t = threading.Thread(target=insert_task)
+        t.start()
+        
         return "Syn Data Success"
 
 
@@ -79,17 +100,20 @@ def load_config_file(config_file_path):
             return
         schema2db[load_dict.get("name")] = {}
         for item in load_dict["API"]:
+            schema_path = item.get("schema")
+            with open(schema_path, 'r', encoding='UTF-8') as schema_file:
+                schema_content = json.load(schema_file)
             if item.get("protocol") == "unix":
                 root_table_name = item.get("name") + "_" + item.get("protocol")
                 dict_key = item.get("name") + "." + item.get("protocol") + "." + item.get("path")
-                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="unix")
+                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], schema_content, engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="unix")
             elif item.get("protocol") == "http":
                 dict_key = item.get("name") + "." + item.get("protocol") + "." + item.get("path") + "." + item.get("method")
                 root_table_name = item.get("name") + "_" + item.get("protocol") + "_" + item.get("method")
-                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="http")
+                schema2db[load_dict.get("name")][dict_key] = JSONSchemaToORM(load_dict["name"], schema_content, engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="http")
             elif item.get("protocol") == "redis":
                 root_table_name = item.get("key")
-                schema2db[load_dict.get("name")][root_table_name] = JSONSchemaToORM(load_dict["name"], item.get("schema"), engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="redis")
+                schema2db[load_dict.get("name")][root_table_name] = JSONSchemaToORM(load_dict["name"], schema_content, engine, root_table_name=load_dict.get("name") + "_" + root_table_name, api_type="redis")
 
 
 if __name__ == '__main__':
